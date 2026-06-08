@@ -1,0 +1,44 @@
+name: Refresh Competitor Data
+
+on:
+  schedule:
+    # Runs every Monday at 8:00 AM UTC
+    - cron: '0 8 * * 1'
+  workflow_dispatch: # Also allows manual trigger from GitHub UI
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: scripts
+
+      - name: Fetch latest Wayback Machine data
+        run: node fetch-data.mjs
+        working-directory: scripts
+
+      - name: Check for changes
+        id: changes
+        run: |
+          git diff --quiet data/live.json || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Commit and push if data changed
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/live.json
+          git commit -m "chore: refresh competitor positioning data [$(date +'%Y-%m-%d')]"
+          git push
