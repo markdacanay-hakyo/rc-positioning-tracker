@@ -28,22 +28,34 @@ const brands = [
   { id: 'sierra',      url: 'sierra.ai' },
   { id: 'decagon',     url: 'decagon.ai' },
 ];
-
 // ─── Fetch helpers ────────────────────────────────────────────────────────────
-async function findLatestSnapshot(url) {
-  // CDX API: find most recent successful snapshot from 2025 onward
-  const cdxUrl = `https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(url)}&output=json&fl=timestamp,statuscode,original&filter=statuscode:200&limit=1&from=20250101&fastLatest=true`;
+async function fetchLivePage(url) {
+  const res = await fetch(`https://${url}`, {
+    timeout: 15000,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    }
+  });
+  const html = await res.text();
+  const dom = new JSDOM(html);
+  const doc = dom.window.document;
 
-  const res = await fetch(cdxUrl, { timeout: 15000 });
-  const data = await res.json();
+  let title = doc.querySelector('title')?.textContent?.trim() || null;
 
-  if (data && data.length >= 2) {
-    const [timestamp, , original] = data[1];
-    return {
-      timestamp,
-      snapshotUrl: `https://web.archive.org/web/${timestamp}/${original}`,
-    };
+  const meta =
+    doc.querySelector('meta[name="description"]')?.getAttribute('content')?.trim() ||
+    doc.querySelector('meta[property="og:description"]')?.getAttribute('content')?.trim() ||
+    null;
+
+  let h1 = null;
+  for (const el of doc.querySelectorAll('h1')) {
+    const text = el.textContent?.trim();
+    if (text && text.length > 3) { h1 = text; break; }
   }
+
+  return { title, meta, h1 };
+}
+
 
   // Fallback: availability API
   const availRes = await fetch(
@@ -61,45 +73,8 @@ async function findLatestSnapshot(url) {
   return null;
 }
 
-async function parseSnapshot(snapshotUrl) {
-  const res = await fetch(snapshotUrl, {
-    timeout: 20000,
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RCPositionTracker/1.0)' },
-  });
-  const html = await res.text();
-  const dom = new JSDOM(html);
-  const doc = dom.window.document;
 
-  // Title — strip Wayback toolbar artifacts
-  let title = doc.querySelector('title')?.textContent?.trim() || null;
-  if (title) title = title.replace(/\s*\|\s*Web Archive\s*$/i, '').trim();
 
-  // Meta description
-  const meta =
-    doc.querySelector('meta[name="description"]')?.getAttribute('content')?.trim() ||
-    doc.querySelector('meta[property="og:description"]')?.getAttribute('content')?.trim() ||
-    null;
-
-  // First meaningful H1
-  let h1 = null;
-  for (const el of doc.querySelectorAll('h1')) {
-    const text = el.textContent?.trim();
-    if (text && text.length > 3 && !text.toLowerCase().includes('wayback machine')) {
-      h1 = text;
-      break;
-    }
-  }
-
-  return { title, meta, h1 };
-}
-
-function formatDate(timestamp) {
-  if (!timestamp || timestamp.length < 8) return null;
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const y = timestamp.slice(0, 4);
-  const m = parseInt(timestamp.slice(4, 6), 10);
-  const d = parseInt(timestamp.slice(6, 8), 10);
-  return `${months[m - 1]} ${d}, ${y}`;
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -116,23 +91,14 @@ async function main() {
   for (const brand of brands) {
     console.log(`\n→ ${brand.id} (${brand.url})`);
     try {
-      const snapshot = await findLatestSnapshot(brand.url);
-      if (!snapshot) {
-        console.log(`  ✗ No snapshot found`);
-        results[brand.id] = { ...existing[brand.id], error: 'No snapshot found', lastAttempt: runDate };
-        continue;
-      }
-
-      console.log(`  Snapshot: ${snapshot.timestamp} — ${snapshot.snapshotUrl}`);
-      const parsed = await parseSnapshot(snapshot.snapshotUrl);
+       const parsed = await fetchLivePage(brand.url);
 
       results[brand.id] = {
         title: parsed.title,
         meta: parsed.meta,
         h1: parsed.h1,
-        fetchedAt: formatDate(snapshot.timestamp),
-        snapshotTimestamp: snapshot.timestamp,
-        snapshotUrl: snapshot.snapshotUrl,
+        fetchedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        snapshotUrl: `https://${brand.url}`,
         lastAttempt: runDate,
         error: null,
       };
